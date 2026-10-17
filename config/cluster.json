@@ -56,7 +56,7 @@
     ]
   },
   "host": {
-    "home": "/home/swank",
+    "home": "/home/lspark",
     "memguard_gib": 3,
     "memguard_interval_seconds": 2,
     "startup_memguard_gib": 5,
@@ -66,7 +66,9 @@
       "release": "7.0.0-1019-nvidia-64k",
       "page_size": 65536,
       "memory_saver_required": true
-    }
+    },
+    "fan_control": false,
+    "fan_control_note": "zspark/dgx4 EC refuses dgx_ec_fan_control (-ENODEV, verified after clean boot); site runs without the fan-floor control"
   },
   "environment": {
     "B12X_AUTOTUNE": "0",
@@ -205,12 +207,12 @@
     "0"
   ],
   "distributed": {
-    "master_addr": "10.0.1.71",
+    "master_addr": "192.168.4.23",
     "master_port": "9999"
   },
   "deployment": {
     "launch_enabled": true,
-    "repository": "https://github.com/christopherowen/spark-ds41f.git",
+    "repository": "https://github.com/unsaltedbutter-ai/spark-ds41f.git",
     "branch": "main",
     "path": "{home}/projects/spark-ds41f",
     "ready_url": "http://127.0.0.1:8000/v1/models",
