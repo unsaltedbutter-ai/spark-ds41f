@@ -11,9 +11,23 @@
     "local.spark3.vllm.tree": "d11e9836e61bc2b763d6805d3324ec8fb5376360"
    }
   },
-  "upstreams_config": "experiments/2026-10-17-r6v/upstreams.lock.json"
+  "upstreams_config": "experiments/2026-10-17-r6v/upstreams.lock.json",
+  "host": {
+   "home": "/home/lspark",
+   "fan_control": false,
+   "fan_control_note": "zspark/dgx4 EC refuses dgx_ec_fan_control (-ENODEV, verified after clean boot); site runs without the fan-floor control"
+  },
+  "distributed": {
+   "master_addr": "192.168.4.23",
+   "master_port": "9999"
+  },
+  "deployment": {
+   "launch_enabled": true,
+   "repository": "https://github.com/unsaltedbutter-ai/spark-ds41f.git",
+   "branch": "main",
+   "path": "{home}/projects/spark-ds41f",
+   "ready_url": "http://127.0.0.1:8000/v1/models"
+  }
  },
- "unset": [
-  "environment.SPARK3_DSPARK_COST_DIR"
- ]
+ "unset": []
 }
