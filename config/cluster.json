@@ -20,7 +20,7 @@
   },
   "container": {
     "name": "dsv41-karmic-kraken",
-    "image": "vllm-ds41f-kkref:19f2c20ed4d6-r6x",
+    "image": "vllm-ds41f-kkref:df1b2e44cd1-r6y",
     "expected_labels": {
       "local.spark3.vllm.tree": "4d6851c8bb1397a55254ba88905a87d9785b98dc",
       "local.spark3.b12x.tree": "89ec2b33b096d8a858756c25b38f78ad2fa5bcce",
