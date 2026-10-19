@@ -1,0 +1,178 @@
+From 801b0f5bcf14cc5afa75958017c2fec143239549 Mon Sep 17 00:00:00 2001
+From: Info <info@unsaltedbutter.ai>
+Date: Sun, 18 Oct 2026 22:15:31 -0700
+Subject: [PATCH 1/2] Instrument per-tensor checkpoint read amplification
+
+Upstream-base: 236ddff04a5f5064084b46464800b70b34ec7d8c
+
+B12X_READ_ACCOUNTING=1 records each tensor's logical payload and the
+record envelope the current read plan asks the reader to fetch (full row
+pitch for strided views). The summary is logged at the end of weight
+loading and, with B12X_READ_ACCOUNTING_PATH, written as JSON with the top
+20 contributors. Accounting only: no record, read or copy changes.
+
+Quality: no numerical change; opt-in and inert when unset.
+Tests: py_compile under Python 3.12; boot with B12X_READ_ACCOUNTING=1.
+Upstream-status: local experiment, not submitted.
+---
+ b12x/integration/vllm/loader.py | 24 +++++++++++++
+ b12x/loader/_checkpoint.py      | 63 ++++++++++++++++++++++++++++++++-
+ 2 files changed, 86 insertions(+), 1 deletion(-)
+
+diff --git a/b12x/integration/vllm/loader.py b/b12x/integration/vllm/loader.py
+index c49b39b..64afe75 100644
+--- a/b12x/integration/vllm/loader.py
++++ b/b12x/integration/vllm/loader.py
+@@ -148,6 +148,30 @@ class B12xModelLoader(DefaultModelLoader):
+                 raise RuntimeError("device checkpoint loading requires vLLM's finish_weight_transfers routing hook")
+             session.flush()
+             stats = session.stats(flush=False)
++            accounting = session.read_accounting_summary()
++            if accounting is not None:
++                logger.info(
++                    "b12x read accounting: %.2f GB payload, %.2f GB record envelope, "
++                    "%.2fx potential amplification across %d tensors",
++                    accounting["payload_bytes"] / 1e9,
++                    accounting["envelope_bytes"] / 1e9,
++                    accounting["amplification"],
++                    accounting["tensors"],
++                )
++                for entry in accounting["top"][:10]:
++                    logger.info(
++                        "b12x read accounting: %s payload %.3f GB record envelope "
++                        "%.3f GB %.2fx (%d records)",
++                        entry["tensor"],
++                        entry["payload_bytes"] / 1e9,
++                        entry["envelope_bytes"] / 1e9,
++                        entry["amplification"],
++                        entry["records"],
++                    )
++                if session.read_accounting_path:
++                    Path(session.read_accounting_path).write_text(
++                        json.dumps(accounting, indent=2) + "\n"
++                    )
+             summary = dict(group.summary) if group is not None else dict(
+                 ranks=1, payload_bytes=stats["payload_bytes"],
+                 physical_bytes=stats["physical_bytes"],
+diff --git a/b12x/loader/_checkpoint.py b/b12x/loader/_checkpoint.py
+index d6b6b52..ad9206c 100644
+--- a/b12x/loader/_checkpoint.py
++++ b/b12x/loader/_checkpoint.py
+@@ -13,6 +13,12 @@ from pathlib import Path
+ from ._native import load
+ 
+ 
++_READ_ACCOUNTING = os.environ.get("B12X_READ_ACCOUNTING", "").strip().lower() not in (
++    "", "0", "false", "no",
++)
++_READ_ACCOUNTING_PATH = os.environ.get("B12X_READ_ACCOUNTING_PATH", "")
++
++
+ def _unique_object(pairs):
+     result = {}
+     for key, value in pairs:
+@@ -84,6 +90,8 @@ class DirectWeightSession:
+         self.transform_bytes = 0
+         self.bf16_expansion_bytes = 0
+         self.transform_scratch = None
++        self.read_accounting = {} if _READ_ACCOUNTING else None
++        self.read_accounting_path = _READ_ACCOUNTING_PATH
+ 
+     def __enter__(self):
+         return self
+@@ -121,6 +129,17 @@ class DirectWeightSession:
+             if self._file_identity(fd) != identity:
+                 raise RuntimeError("checkpoint source changed after metadata was opened")
+ 
++    def _account_read(self, name, payload, envelope):
++        """Accumulate one tensor's logical bytes and its read envelope."""
++        if self.read_accounting is None:
++            return
++        bucket = self.read_accounting.get(name)
++        if bucket is None:
++            bucket = self.read_accounting[name] = [0, 0, 0]
++        bucket[0] += payload
++        bucket[1] += envelope
++        bucket[2] += 1
++
+     def flush(self):
+         """Complete accepted destinations before a numerical consumer runs."""
+         if self.shared_read_group is not None and self.shared_read_group.failed:
+@@ -462,6 +481,8 @@ class DirectWeightSession:
+                     else 0
+                 )
+                 outer = source.shape[:axis] if axis >= 0 else ()
++                width = elements * source.element_size()
++                envelope = rows * source_stride if rows > 1 else width
+                 for index in product(*(range(size) for size in outer)):
+                     source_delta = (
+                         sum(i * s for i, s in zip(index, source.stride(), strict=False))
+@@ -478,7 +499,7 @@ class DirectWeightSession:
+                         (
+                             entry.fd,
+                             entry.offset + offset + source_delta,
+-                            elements * source.element_size(),
++                            width,
+                             destination.data_ptr() + destination_delta,
+                             int(expand),
+                             rows,
+@@ -486,6 +507,7 @@ class DirectWeightSession:
+                             destination_stride,
+                         )
+                     )
++                    self._account_read(entry.name, rows * width, envelope)
+                 self.destinations.append(destination)
+                 if expand and self._gds is None:
+                     self.bf16_expansion_bytes += source.nbytes
+@@ -519,12 +541,51 @@ class DirectWeightSession:
+                         )
+                     )
+                     flat[start : start + count].copy_(scratch[:count])
++                    self._account_read(
++                        entry.name,
++                        count * source.element_size(),
++                        count * source.element_size(),
++                    )
+                 self.transform_bytes += source.nbytes
+         torch.autograd.graph.increment_version(destination)
+         self.payload_bytes += source.nbytes
+         self.loaded_tensors += 1
+         return True
+ 
++    def read_accounting_summary(self, top: int = 20) -> dict | None:
++        """Per-tensor payload vs read envelope, when B12X_READ_ACCOUNTING is set.
++
++        ``envelope_bytes`` is what the current record layout asks the reader to
++        fetch (full row pitch for strided views); ``payload_bytes`` is what the
++        model actually consumes. The ratio is the amplification the read plan
++        can remove. This is accounting only: it never changes a record.
++        """
++        if not self.read_accounting:
++            return None
++        entries = [
++            {
++                "tensor": name,
++                "payload_bytes": payload,
++                "envelope_bytes": envelope,
++                "amplification": envelope / payload if payload else 1.0,
++                "records": records,
++            }
++            for name, (payload, envelope, records) in self.read_accounting.items()
++        ]
++        entries.sort(
++            key=lambda entry: entry["envelope_bytes"] - entry["payload_bytes"],
++            reverse=True,
++        )
++        total_payload = sum(entry["payload_bytes"] for entry in entries)
++        total_envelope = sum(entry["envelope_bytes"] for entry in entries)
++        return {
++            "payload_bytes": total_payload,
++            "envelope_bytes": total_envelope,
++            "amplification": total_envelope / total_payload if total_payload else 1.0,
++            "tensors": len(entries),
++            "top": entries[:top],
++        }
++
+     def stats(self, *, flush=True):
+         if flush:
+             self.flush()

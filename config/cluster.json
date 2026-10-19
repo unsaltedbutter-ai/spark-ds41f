@@ -23,7 +23,7 @@
     "image": "vllm-ds41f-kkref:19f2c20ed4d6-r6x",
     "expected_labels": {
       "local.spark3.vllm.tree": "4d6851c8bb1397a55254ba88905a87d9785b98dc",
-      "local.spark3.b12x.tree": "1a647a311ca55d45070ab83d60668d9c8fb8886c",
+      "local.spark3.b12x.tree": "89ec2b33b096d8a858756c25b38f78ad2fa5bcce",
       "local.spark3.nccl.tree": "6af10aa730a64fcee8781d62340a9c9184e79469",
       "local.spark3.tilelang.tree": "222b895d04ee6cd75179155d06e0c0d450636f51",
       "local.spark3.tile_kernels.tree": "cb2fa41c8af290204c81c547ed678ebf957cca53",

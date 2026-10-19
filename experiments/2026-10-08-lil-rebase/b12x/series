@@ -13,3 +13,5 @@
 0010-dispatch-capacity.patch
 0011-loader-abi.patch
 0012-packed-bf16-vocab-projection.patch
+0013-read-accounting.patch
+0014-selected-read-plan.patch

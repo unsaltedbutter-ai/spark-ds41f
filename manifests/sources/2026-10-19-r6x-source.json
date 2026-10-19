@@ -68,16 +68,18 @@
  "b12x": {
   "base_revision": "236ddff04a5f5064084b46464800b70b34ec7d8c",
   "patch_series": "experiments/2026-10-08-lil-rebase/b12x/series",
-  "patchset_sha256": "3b0eb04a5870302937679badb436bfc9aa4afadd19333eb96d33148004ea1f09",
-  "patch_head": "69e5795e2141fbb5fa2b3af096d51e754939bb41",
-  "expected_tree": "1a647a311ca55d45070ab83d60668d9c8fb8886c",
+  "patchset_sha256": "cfc1950847f14f6105ea25d968694f7a442b44d111ff7b6d290fefde1a605947",
+  "patch_head": "bba7fd723792e91c1f47cce7c0f59289992903de",
+  "expected_tree": "89ec2b33b096d8a858756c25b38f78ad2fa5bcce",
   "verification": "bin/spark3 build prepare applies the series to the pinned revision and checks this patch head and tree; image label local.spark3.b12x.tree matches",
   "capabilities": [
    "packed-bf16-vocab-projection",
+   "read-accounting",
    "rocenante-mesh4",
    "rocenante-mesh4-fourpaths",
    "rocenante-ring4",
-   "rocenante-ring4-bidirectional"
+   "rocenante-ring4-bidirectional",
+   "selected-read-plan"
   ]
  },
  "nccl": {

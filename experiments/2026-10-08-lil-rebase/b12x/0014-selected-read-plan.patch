@@ -1,0 +1,71 @@
+From 5f197b785c20fe6c317c38bab57aea1efb8b5cf5 Mon Sep 17 00:00:00 2001
+From: Info <info@unsaltedbutter.ai>
+Date: Sun, 18 Oct 2026 22:15:34 -0700
+Subject: [PATCH 2/2] Add opt-in selected-range bounce read plan
+
+Upstream-base: 236ddff04a5f5064084b46464800b70b34ec7d8c
+
+The bounce reader coalesces small strided rows into one read of the full
+row pitch, so a TP slice fetches the other ranks' columns as well.
+B12X_READ_PLAN=selected reads each row's selected width separately;
+adaptive (B12X_READ_PLAN_GAP, default 4096) keeps the coalesced read when
+the gap is small. The default (envelope) is byte-for-byte the old path.
+
+Quality: no numerical change; the selected path reads the same bytes into
+the same destinations.
+Tests: C99 -Wall -Wextra -Werror build in the r6x image; A/B boot with
+B12X_READ_ACCOUNTING=1 and B12X_READ_PLAN=envelope|adaptive|selected.
+Upstream-status: local experiment, not submitted.
+---
+ b12x/loader/_bounce.c | 17 ++++++++++++++++-
+ 1 file changed, 16 insertions(+), 1 deletion(-)
+
+diff --git a/b12x/loader/_bounce.c b/b12x/loader/_bounce.c
+index 05faeb3..ecd71c1 100644
+--- a/b12x/loader/_bounce.c
++++ b/b12x/loader/_bounce.c
+@@ -2,6 +2,8 @@
+ #define BOUNCE_SLOTS 16
+ #define BOUNCE_SLOT_BYTES (1 << 20)
+ #define BOUNCE_BYTES (BOUNCE_SLOTS * BOUNCE_SLOT_BYTES)
++#include <stdlib.h>
++#include <string.h>
+ #ifdef B12X_HAVE_LIBURING
+ #include <liburing.h>
+ #endif
+@@ -26,6 +28,8 @@ typedef struct {
+     unsigned ready_slots[BOUNCE_SLOTS], head, tail, ready_count, copying;
+     unsigned depth, max_inflight;
+     uint64_t reads, physical_bytes, bounced_bytes, strided_bytes, submits;
++    int read_plan;
++    int64_t read_plan_gap;
+ #ifdef B12X_HAVE_LIBURING
+     struct io_uring ring;
+     bool ring_ready;
+@@ -130,6 +134,12 @@ static bounce_ring_t *bounce_create(int device, unsigned depth, failure_t *failu
+     pthread_cond_init(&ring->drained, NULL);
+     ring->device = device;
+     ring->depth = depth;
++    const char *plan = getenv("B12X_READ_PLAN");
++    ring->read_plan = plan && !strcmp(plan, "selected") ? 1
++                    : plan && !strcmp(plan, "adaptive") ? 2 : 0;
++    const char *gap = getenv("B12X_READ_PLAN_GAP");
++    ring->read_plan_gap = gap ? strtoll(gap, NULL, 10) : IO_ALIGNMENT;
++    if (ring->read_plan_gap < 0) ring->read_plan_gap = 0;
+     int error = posix_memalign((void **)&ring->buffers, IO_ALIGNMENT, BOUNCE_BYTES);
+     if (error) goto failed;
+     if (!cuda_ok(cudaSetDevice(device), "select ring device", failure) ||
+@@ -215,7 +225,12 @@ static bool bounce_execute(bounce_ring_t *ring, read_job_t *jobs, size_t count,
+                 slot->job.bytes &= ~(int64_t)1;
+             }
+             slot->job.rows = 1;
+-            if (!within && job->bytes < IO_ALIGNMENT && job->source_stride >= job->bytes) {
++            bool coalesce = !within && job->bytes < IO_ALIGNMENT &&
++                            job->source_stride >= job->bytes;
++            if (coalesce && ring->read_plan == 1) coalesce = false;
++            if (coalesce && ring->read_plan == 2)
++                coalesce = job->source_stride - job->bytes <= ring->read_plan_gap;
++            if (coalesce) {
+                 slot->job.rows += (BOUNCE_SLOT_BYTES - (int64_t)slot->delta - job->bytes) / job->source_stride;
+                 if (slot->job.rows > job->rows - row) slot->job.rows = job->rows - row;
+             }
