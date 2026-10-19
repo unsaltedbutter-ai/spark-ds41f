@@ -73,9 +73,9 @@
   "environment": {
     "B12X_AUTOTUNE": "0",
     "B12X_READ_ACCOUNTING": "1",
-    "B12X_READ_PLAN": "selected",
+    "B12X_READ_PLAN": "adaptive",
     "B12X_READ_PLAN_GAP": "4096",
-    "B12X_READ_ACCOUNTING_PATH": "/cache/kkref/b12x-read-accounting-selected.json",
+    "B12X_READ_ACCOUNTING_PATH": "/cache/kkref/b12x-read-accounting-adaptive.json",
     "B12X_BIND_COMPILE_WORKERS": "2",
     "B12X_COMPILE_CACHE_DIR": "/cache/kkref/jit/b12x/compile",
     "B12X_CUTE_COMPILE_CACHE_DIR": "/cache/kkref/jit/b12x/cute",
