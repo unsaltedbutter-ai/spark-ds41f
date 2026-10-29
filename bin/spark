@@ -742,6 +742,8 @@ printf 'fan_dkms=%s\\n' "$(dkms status -m dgx-spark-fan-control -k "$(uname -r)"
 printf 'fan_module=%s\\n' "$(grep -c '^dgx_ec_fan_control ' /proc/modules)"
 printf 'fan_cooling_device=%s\\n' "$(grep -lx dgx_ec_fan_floor /sys/class/thermal/cooling_device*/type 2>/dev/null | wc -l)"
 printf 'fan_service=%s\\n' "$(systemctl cat dgx-fan-control.service >/dev/null 2>&1 && echo installed || echo absent)"
+printf 'fan_service_active=%s\\n' "$(systemctl is-active dgx-fan-control.service 2>/dev/null || true)"
+printf 'fan_service_enabled=%s\\n' "$(systemctl is-enabled dgx-fan-control.service 2>/dev/null || true)"
 printf 'gpu=%s\\n' "$(nvidia-smi --query-gpu=clocks.sm,power.draw --format=csv,noheader,nounits 2>/dev/null | head -1)"
 """
 HOST_FACTS_QUERY += (
@@ -1104,6 +1106,28 @@ def fan_control_problems(node_name: str, facts: dict[str, str],
     return []
 
 
+def fan_control_off_warnings(node_name: str, facts: dict[str, str],
+                             fan_control: bool = True) -> list[str]:
+    """The host still applying a fan floor the site says it does not use.
+
+    host.fan_control governs what this recipe does, not what the host runs. A
+    dgx-fan-control service left enabled keeps adding its floor on top of
+    NVIDIA's curve, so a site that turned the flag off to stop the extra noise
+    and heat has to stop the service too.
+    """
+    if fan_control:
+        return []
+    active = facts.get("fan_service_active", "")
+    enabled = facts.get("fan_service_enabled", "")
+    if active == "active" or enabled in ("enabled", "enabled-runtime"):
+        return [Warn(
+            f"{node_name}: host.fan_control is false but dgx-fan-control.service is "
+            f"{active or 'unknown'}/{enabled or 'unknown'}; its floor still applies — "
+            "run sudo systemctl disable --now dgx-fan-control.service"
+        )]
+    return []
+
+
 def roce_gid_setting(cluster: dict, node: dict) -> tuple[int, list[str]]:
     """The GID index sparknet and NCCL are configured to use, and the node's HCAs."""
     env = expected_environment(cluster, node)
@@ -1218,6 +1242,10 @@ def live_doctor(cluster: dict, nodes: dict) -> list[str]:
     problems: list[str] = []
     trial_path = kernel_policy_path(cluster)
     trial = json.loads(trial_path.read_text()) if trial_path.exists() else None
+    if trial:
+        # The site's fan policy travels with the kernel policy: a board whose EC
+        # refuses the fan-floor driver must not be reported as unprepared for it.
+        trial = dict(trial, fan_control=fan_control_enabled(cluster))
     kernel_inventories = {}
     corrections = []
     name = cluster["container"]["name"]
@@ -1245,6 +1273,8 @@ def live_doctor(cluster: dict, nodes: dict) -> list[str]:
         problems.extend(nvme_coalescing_warnings(node["name"], facts))
         problems.extend(nvme_apst_warnings(node["name"], facts))
         problems.extend(fan_control_problems(
+            node["name"], facts, fan_control=fan_control_enabled(cluster)))
+        problems.extend(fan_control_off_warnings(
             node["name"], facts, fan_control=fan_control_enabled(cluster)))
         gid_index, hcas = roce_gid_setting(cluster, node)
         gids = remote_shell(nodes, node, roce_gid_query(hcas))

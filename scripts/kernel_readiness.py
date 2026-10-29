@@ -12,6 +12,23 @@ import re
 import subprocess
 import sys
 
+FAN_MODULE = "dgx_ec_fan_control"
+MODULES = ("nvidia", "nvidia_uvm", "nvidia_drm", "mlx5_core", "mlx5_ib")
+
+
+def fan_control_enabled(policy):
+    """Whether this site runs the fan-floor control (host.fan_control, default true).
+
+    bin/spark passes the site's host.fan_control through the kernel policy. A
+    board whose EC refuses the driver, or a site that does not want the floor,
+    must not be reported as unprepared for a module it will never load.
+    """
+    return policy.get("fan_control", True) is not False
+
+
+def required_modules(policy):
+    return MODULES + ((FAN_MODULE,) if fan_control_enabled(policy) else ())
+
 
 def command(*args):
     result = subprocess.run(args, capture_output=True, text=True, timeout=20,
@@ -91,12 +108,13 @@ def collect(policy):
     data["governors"] = sorted({p.read_text().strip() for p in Path("/sys/devices/system/cpu/cpufreq").glob("policy*/scaling_governor")})
     config = Path(f"/boot/config-{target}")
     data["config_64k"] = config.exists() and "CONFIG_ARM64_64K_PAGES=y" in config.read_text()
-    for module in ("nvidia", "nvidia_uvm", "nvidia_drm", "mlx5_core", "mlx5_ib", "dgx_ec_fan_control"):
+    for module in required_modules(policy):
         data["modules"][module] = {
             "vermagic": read(module, "modinfo", "-k", target, "-F", "vermagic", module),
             "version": read(module, "modinfo", "-k", target, "-F", "version", module),
         }
-    data["fan_dkms"] = read("fan DKMS", "dkms", "status", "-m", "dgx-spark-fan-control", "-k", target)
+    if fan_control_enabled(policy):
+        data["fan_dkms"] = read("fan DKMS", "dkms", "status", "-m", "dgx-spark-fan-control", "-k", target)
     if policy.get("memory_saver"):
         saver = policy["memory_saver"]
         data["memory_saver_dkms"] = read("memory-saver DKMS", "dkms", "status",
@@ -107,13 +125,14 @@ def collect(policy):
             for field in ("filename", "srcversion", "signer")
         }
     data["secure_boot"] = read("Secure Boot", "mokutil", "--sb-state")
-    data["fan_signer"] = read("fan signature", "modinfo", "-k", target, "-F", "signer", "dgx_ec_fan_control")
-    if data["secure_boot"] == "SecureBoot enabled":
-        result = subprocess.run(["mokutil", "--test-key", policy["fan_signing_certificate"]],
-                                capture_output=True, text=True, timeout=20,
-                                env=dict(os.environ, LC_ALL="C"))
-        data["fan_key_enrollment"] = (result.stdout + result.stderr).strip()
-        data["fan_key_enrolled"] = key_enrolled(result.returncode, data["fan_key_enrollment"])
+    if fan_control_enabled(policy):
+        data["fan_signer"] = read("fan signature", "modinfo", "-k", target, "-F", "signer", FAN_MODULE)
+        if data["secure_boot"] == "SecureBoot enabled":
+            result = subprocess.run(["mokutil", "--test-key", policy["fan_signing_certificate"]],
+                                    capture_output=True, text=True, timeout=20,
+                                    env=dict(os.environ, LC_ALL="C"))
+            data["fan_key_enrollment"] = (result.stdout + result.stderr).strip()
+            data["fan_key_enrolled"] = key_enrolled(result.returncode, data["fan_key_enrollment"])
     grub = read("GRUB menu", "cat", "/boot/grub/grub.cfg")
     environment = read("GRUB environment", "grub-editenv", "list")
     data["grub"] = grub_inventory(grub, environment)
@@ -163,17 +182,18 @@ def findings(name, data, policy):
     if data.get("governors") != ["performance"]:
         issues.append(f"{name}: CPU governors differ from performance: {data.get('governors')!r}")
         fixes.append(f"{name}: after installing matching linux-tools, sudo systemctl restart nv-cpu-governor.service")
-    for module in ("nvidia", "nvidia_uvm", "nvidia_drm", "mlx5_core", "mlx5_ib", "dgx_ec_fan_control"):
+    for module in required_modules(policy):
         info = data.get("modules", {}).get(module, {})
         if info.get("vermagic", "").split()[:1] != [target]:
             issues.append(f"{name}: {module} is not prepared for {target}")
         if module.startswith("nvidia") and info.get("version") != policy["driver"]:
             issues.append(f"{name}: candidate {module} driver version differs from {policy['driver']}")
-    if "installed" not in data.get("fan_dkms", ""):
-        issues.append(f"{name}: fan-control DKMS is not installed for {target}")
-        fixes.append(f"{name}: sudo dkms autoinstall -k {target}")
-    if data.get("secure_boot") == "SecureBoot enabled" and (not data.get("fan_signer") or not data.get("fan_key_enrolled")):
-        issues.append(f"{name}: Secure Boot is enabled but the candidate fan signature/enrolled key is unverified")
+    if fan_control_enabled(policy):
+        if "installed" not in data.get("fan_dkms", ""):
+            issues.append(f"{name}: fan-control DKMS is not installed for {target}")
+            fixes.append(f"{name}: sudo dkms autoinstall -k {target}")
+        if data.get("secure_boot") == "SecureBoot enabled" and (not data.get("fan_signer") or not data.get("fan_key_enrolled")):
+            issues.append(f"{name}: Secure Boot is enabled but the candidate fan signature/enrolled key is unverified")
     grub = data.get("grub", {})
     if target not in grub.get("entries", {}).values():
         issues.append(f"{name}: candidate is missing from GRUB")

@@ -62,6 +62,11 @@ thermal zone below 55 °C.
   cannot run (the service is missing or does not start) aborts the bench before
   measuring. The report's `fan_curve` section records each node's state, and a
   curve that cannot be stopped fails the run.
+- A site with `host.fan_control` false skips all of it: the nodes cool on
+  NVIDIA's curve, no floor is selected and no curve is started, and the report's
+  `cooling` and `fan_curve` sections record that nothing was done. The thermal
+  baseline is then whatever the firmware holds, so a run on such a site is not
+  comparable with one taken under the floor.
 - The bench report's `cooling` section records each node's start and final
   temperature, whether it was cooled, and for how long.
 - `--cool-below` changes the threshold (0 skips the check). `--cool-timeout`

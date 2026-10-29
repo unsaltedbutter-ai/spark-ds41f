@@ -385,6 +385,45 @@ class FanControlTest(unittest.TestCase):
         self.assertNotIsInstance(problems[0], spark.Warn)
         self.assertIn("dgx_ec_fan_control is not loaded", problems[0])
 
+    def test_flag_off_drops_the_whole_requirement(self) -> None:
+        # A site that does not want the floor must not be told to install it.
+        self.assertEqual(
+            spark.fan_control_problems(
+                "dgx4",
+                facts(fan_dkms="", fan_module="0", fan_cooling_device="0", fan_service="absent"),
+                fan_control=False,
+            ),
+            [],
+        )
+
+    def test_flag_off_warns_when_the_service_still_applies_its_floor(self) -> None:
+        problems = spark.fan_control_off_warnings(
+            "dgx4",
+            facts(fan_service_active="active", fan_service_enabled="enabled"),
+            fan_control=False,
+        )
+        self.assertEqual(len(problems), 1)
+        self.assertIsInstance(problems[0], spark.Warn)
+        self.assertIn("sudo systemctl disable --now dgx-fan-control.service", problems[0])
+
+    def test_flag_off_is_quiet_when_the_service_is_stopped(self) -> None:
+        self.assertEqual(
+            spark.fan_control_off_warnings(
+                "dgx4",
+                facts(fan_service_active="inactive", fan_service_enabled="disabled"),
+                fan_control=False,
+            ),
+            [],
+        )
+
+    def test_flag_on_never_warns_about_the_service(self) -> None:
+        self.assertEqual(
+            spark.fan_control_off_warnings(
+                "dgx1", facts(fan_service_active="active", fan_service_enabled="enabled")
+            ),
+            [],
+        )
+
 
 class FanCurveTest(unittest.TestCase):
     """bench runs the performance curve while it measures, then restores each node."""

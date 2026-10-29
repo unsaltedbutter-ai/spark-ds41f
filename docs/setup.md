@@ -65,7 +65,7 @@ Each node needs:
 | [NVMe interrupt coalescing off](#nvme-interrupt-coalescing) | optional | optional | `doctor --live` (warn) | unmask the service |
 | [NVMe sleeps only when idle](#nvme-power-states-apst) (APST timeouts 2 s / 60 s) | recommended | recommended | `doctor --live` (warn) | delete the modprobe file |
 | [UEFI boot order](#boot-order) | optional | optional | `doctor --live` (warn) | `efibootmgr --bootorder` |
-| [Fan-floor control](#fan-floor-control) | recommended | recommended | `doctor --live` (error until installed) | its [uninstall guide](https://github.com/christopherowen/dgx-spark-fan-control/blob/v0.1.4/docs/maintenance.md#uninstall) |
+| [Fan-floor control](#fan-floor-control) | recommended, optional (`host.fan_control`) | recommended, optional (`host.fan_control`) | `doctor --live` (error until installed, unless `host.fan_control` is false) | its [uninstall guide](https://github.com/christopherowen/dgx-spark-fan-control/blob/v0.1.4/docs/maintenance.md#uninstall) |
 | [64 KiB kernel, swap and memory policy](#2-kernel-64-kib-profiles) | — | required | `doctor --live`, launch | [boot the 4 KiB kernel](#revert-the-64-kib-kernel) |
 | [Memory saver](#2-kernel-64-kib-profiles) (signed DKMS UVM module) | — | required | `doctor --live`, launch | its [removal guide](https://github.com/christopherowen/dgx-spark-memory-saver/blob/main/docs/dkms.md#remove-and-restore-stock-uvm) |
 | [ConnectX-7 addressing](#3-fabric-cabling-and-addressing) (netplan) | required | required | `doctor --live`, launch | remove `40-cx7.yaml` |
@@ -235,19 +235,32 @@ the `sudo efibootmgr --bootorder …` that puts Ubuntu first.
 (version 0.1.4, which `doctor --live` checks) adds a fan floor the EC enforces on top of NVIDIA's curve
 ([installation](https://github.com/christopherowen/dgx-spark-fan-control/blob/v0.1.4/docs/installation.md)). Serving does not use
 it, but `doctor --live` reports it as an error until it is installed.
-`bin/spark bench` and kernel-lab jobs use it to cool every node below 55 °C
-before measuring; without it they wait for the nodes to cool on NVIDIA's
-curve. With Secure Boot, its installation creates and enrolls a MOK signing
-key, and the memory saver's install script in [stage 2](#2-kernel-64-kib-profiles)
-signs with the same key.
+
+It is optional. Set `"fan_control": false` under `host` in your site's cluster
+config when the floor is not wanted: a GB10 whose EC refuses the driver (some
+ASUS GX10 units answer it with `-ENODEV`), or a node underclocked far enough
+that the curve's floor is louder and hotter than the job needs. With the flag
+off, `doctor --live` records the absence instead of erroring, `bin/spark bench`
+and kernel-lab jobs skip the pre-cool and the performance curve instead of
+refusing to measure, and the kernel readiness check stops requiring the module,
+its DKMS entry and its Secure Boot key. Nothing installs it for you either way:
+skip this section entirely when the flag is off.
+
+Where it is installed, `bin/spark bench` and kernel-lab jobs use it to cool
+every node below 55 °C before measuring; without it they wait for the nodes to
+cool on NVIDIA's curve. With Secure Boot, its installation creates and enrolls
+a MOK signing key, and the memory saver's install script in
+[stage 2](#2-kernel-64-kib-profiles) signs with the same key — so a site that
+skips fan control gives the memory saver its own enrolled key instead
+([its DKMS guide](https://github.com/christopherowen/dgx-spark-memory-saver/blob/main/docs/dkms.md)).
 
 Install its `dgx-fan-control.service` as well; `doctor --live` reports an
-error until it is installed. `bin/spark bench` requires it: it starts the
-service's performance curve on every node while it measures, so every
-benchmark runs under the same fan policy, and stops it again where it started
-it. Whether it also runs while serving is your choice. The curve raises the fan floor from 50 °C, well before
-NVIDIA's curve, so nodes run cooler and louder under load; serving does not
-need it. Pick either
+error until it is installed. `bin/spark bench` requires it where the flag is
+on: it starts the service's performance curve on every node while it measures,
+so every benchmark runs under the same fan policy, and stops it again where it
+started it. Whether it also runs while serving is your choice. The curve raises
+the fan floor from 50 °C, well before NVIDIA's curve, so nodes run cooler and
+louder under load; serving does not need it. Pick either
 [startup mode](https://github.com/christopherowen/dgx-spark-fan-control/blob/v0.1.4/docs/installation.md#5-choose-your-startup-mode),
 the same on every node.
 

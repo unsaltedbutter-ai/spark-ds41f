@@ -141,6 +141,27 @@ class ReadinessTest(unittest.TestCase):
         data["fan_signer"] = ""
         self.assertTrue(any("candidate fan signature" in x for x in kernel.findings("dgx1", data, POLICY)[0]))
 
+    def test_fan_control_off_drops_every_fan_requirement(self):
+        policy = dict(POLICY, fan_control=False)
+        data = ready()
+        for key in ("fan_dkms", "fan_signer", "fan_key_enrolled"):
+            data.pop(key)
+        del data["modules"]["dgx_ec_fan_control"]
+        self.assertEqual(kernel.findings("dgx1", data, policy), ([], []))
+
+    def test_fan_control_off_still_requires_the_other_modules(self):
+        policy = dict(POLICY, fan_control=False)
+        data = ready()
+        del data["modules"]["mlx5_ib"]
+        self.assertTrue(any("mlx5_ib" in x for x in kernel.findings("dgx1", data, policy)[0]))
+
+    def test_fan_control_defaults_on(self):
+        self.assertTrue(kernel.fan_control_enabled(POLICY))
+        self.assertTrue(kernel.fan_control_enabled(dict(POLICY, fan_control=True)))
+        self.assertFalse(kernel.fan_control_enabled(dict(POLICY, fan_control=False)))
+        self.assertEqual(kernel.required_modules(dict(POLICY, fan_control=False)),
+                         ("nvidia", "nvidia_uvm", "nvidia_drm", "mlx5_core", "mlx5_ib"))
+
     def test_mokutil_enrollment_exit_status_is_not_shell_success(self):
         self.assertTrue(kernel.key_enrolled(1, "/root/key.der is already enrolled\n"))
         self.assertFalse(kernel.key_enrolled(0, "/root/key.der is not enrolled"))
