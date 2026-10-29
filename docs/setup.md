@@ -321,11 +321,13 @@ yours to run, as root, with the service stopped:
 3. **Memory saver.** Run `bash experiments/2026-10-02-memory-saver-capacity/install-dkms.sh`
    from a clean checkout. It clones the memory saver at the revision pinned
    in `config/kernel-trial.json`, then builds and installs DKMS 0.4.1 for the
-   64 KiB kernel. It signs with the key that dgx-spark-fan-control created
-   (`/root/.local/share/dgx-spark-fan-control/keys`) and refuses to run unless
-   that key is enrolled in MOK. Without fan control, follow the memory
-   saver's [DKMS guide](https://github.com/christopherowen/dgx-spark-memory-saver/blob/main/docs/dkms.md), which sets up your own
-   enrolled key.
+   64 KiB kernel. It signs with the key in `DGX_MOK_DIR`: the one
+   dgx-spark-fan-control created when that exists, otherwise the memory
+   saver's own `/root/.local/share/dgx-spark-memory-saver/keys`. A site
+   without fan control creates and enrolls its own pair (its
+   [DKMS guide](https://github.com/christopherowen/dgx-spark-memory-saver/blob/main/docs/dkms.md))
+   and points `DGX_MOK_DIR` at it; the install refuses only when no enrolled
+   pair exists at all, and says so.
 4. **Trial boot.** On one node, boot the 64 KiB kernel once, leaving GRUB's
    default alone:
 

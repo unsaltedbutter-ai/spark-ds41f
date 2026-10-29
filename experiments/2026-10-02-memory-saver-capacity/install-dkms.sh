@@ -17,14 +17,31 @@ git -C "$source_dir" fetch origin
 git -C "$source_dir" checkout --detach "${pin[1]}"
 cd "$source_dir"
 ./scripts/check
-# The fleet already uses this enrolled identity for fan-control; preserve it.
-sudo mokutil --test-key /root/.local/share/dgx-spark-fan-control/keys/MOK.der || true
-sudo python3 - <<'PY'
+# The signing identity is the memory saver's DGX_MOK_DIR. A site that runs
+# fan control reuses the key dgx-spark-fan-control created; a site that does
+# not names its own enrolled pair, so the floor is never a prerequisite.
+fan_keys=/root/.local/share/dgx-spark-fan-control/keys
+saver_keys=/root/.local/share/dgx-spark-memory-saver/keys
+if [ -n "${DGX_MOK_DIR:-}" ]; then
+  key_dir=$DGX_MOK_DIR
+elif sudo test -e "$fan_keys/MOK.der"; then
+  key_dir=$fan_keys
+else
+  key_dir=$saver_keys
+fi
+if ! sudo test -e "$key_dir/MOK.priv" || ! sudo test -e "$key_dir/MOK.der"; then
+  echo "No MOK key pair at $key_dir." >&2
+  echo "Create and enroll one (the memory saver's docs/dkms.md), then set" >&2
+  echo "DGX_MOK_DIR to its directory. Fan control is not required." >&2
+  exit 1
+fi
+sudo mokutil --test-key "$key_dir/MOK.der" || true
+sudo python3 - "$key_dir" <<'PY'
 import sys
 sys.path.insert(0, 'scripts')
 from signing import check_pair, require_enrolled
 from pathlib import Path
-p=Path('/root/.local/share/dgx-spark-fan-control/keys')
+p=Path(sys.argv[1])
 check_pair(p/'MOK.priv', p/'MOK.der'); require_enrolled(p/'MOK.der')
 PY
 version=${pin[2]}
